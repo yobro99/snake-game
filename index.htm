@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>貪食蛇 v1.5 Obstacle Final Candidate</title>
+<style>
+html,body{
+  margin:0;
+  padding:0;
+  width:100%;
+  height:100%;
+  background:#0b1220;
+  font-family:Arial;
+  overflow:hidden;
+  touch-action:none;
+}
+.wrap{
+  height:100%;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+}
+#info{color:#fff;font-size:14px;}
+canvas{
+  border:2px solid #22c55e;
+  border-radius:14px;
+  width:min(400px,98vw);
+  height:min(400px,98vw);
+}
+#modeBar{display:flex;gap:6px;}
+button{
+  padding:6px 10px;
+  border:none;
+  border-radius:8px;
+  background:#1f2937;
+  color:#fff;
+}
+button.active{
+  background:#22c55e;
+  color:#000;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="info"></div>
+  <canvas id="game" width="400" height="400"></canvas>
+
+  <div id="modeBar">
+    <button onclick="setMode('classic')">基本</button>
+    <button onclick="setMode('speed')">競速</button>
+    <button onclick="setMode('time')">限時</button>
+    <button onclick="setMode('obstacle')">障礙</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const info = document.getElementById("info");
+
+const grid = 20;
+const cell = 400/grid;
+const BASE_SPEED = 100;
+const SPEED_TARGET = 38;
+const TIME_LIMIT = 88;
+const MAX_OBSTACLES = 44;
+const OBSTACLE_TIMER_STOP = 240;
+
+const bgSources = [
+"01.png",
+"02.png",
+"03.png",
+"04.png",
+"05.png",
+"06.png",
+"07.png",
+"08.png",
+"09.png",
+"10.png"
+];
+
+const bgImgs = bgSources.map(src=>{
+  const img = new Image();
+  img.crossOrigin="anonymous";
+  img.src=src;
+  return img;
+});
+
+let snake,dx,dy,food,score,loop,startTime;
+let particles=[],obstacles=[];
+let worldIndex=0;
+let mode="classic";
+let lastObstacleTimeMark=0;
+
+let classicRank=JSON.parse(localStorage.getItem("snake_rank")||"[]");
+let speedRank=JSON.parse(localStorage.getItem("snake_speed_rank")||"[]");
+let timeRank=JSON.parse(localStorage.getItem("snake_time_rank")||"[]");
+let obstacleRank=JSON.parse(localStorage.getItem("snake_obstacle_rank")||"[]");
+
+function init(){
+  snake=[{x:10,y:10}];
+  dx=1;dy=0;
+  score=0;
+  particles=[];
+  obstacles=[];
+  worldIndex=0;
+  startTime=Date.now();
+  lastObstacleTimeMark=0;
+
+  spawnFood();
+
+  clearInterval(loop);
+  loop=setInterval(update,BASE_SPEED);
+  updateUI();
+}
+
+function setMode(m){
+  mode=m;
+  document.querySelectorAll("#modeBar button").forEach((b,i)=>{
+    b.classList.toggle("active",["classic","speed","time","obstacle"][i]===m);
+  });
+  init();
+}
+
+function spawnFood(){
+  do{
+    food={
+      x:Math.floor(Math.random()*grid),
+      y:Math.floor(Math.random()*grid)
+    };
+  }while(
+    snake?.some(s=>s.x===food.x&&s.y===food.y) ||
+    obstacles.some(o=>o.x===food.x&&o.y===food.y)
+  );
+}
+
+function spawnObstacle(){
+  if(obstacles.length>=MAX_OBSTACLES) return;
+
+  let pos;
+  do{
+    pos={
+      x:Math.floor(Math.random()*grid),
+      y:Math.floor(Math.random()*grid)
+    };
+  }while(
+    snake.some(s=>s.x===pos.x&&s.y===pos.y) ||
+    obstacles.some(o=>o.x===pos.x&&o.y===pos.y) ||
+    (food.x===pos.x&&food.y===pos.y)
+  );
+
+  obstacles.push(pos);
+}
+
+function createParticles(x,y,count=12,power=4){
+  for(let i=0;i<count;i++){
+    particles.push({
+      x,y,
+      vx:(Math.random()-0.5)*power,
+      vy:(Math.random()-0.5)*power,
+      life:20
+    });
+  }
+}
+
+function refreshWorld(){
+  worldIndex=Math.min(Math.floor(score/10),bgImgs.length-1);
+}
+
+function saveRank(key,val,asc=false){
+  let arr=JSON.parse(localStorage.getItem(key)||"[]");
+  arr.push(val);
+  arr.sort((a,b)=>asc?a-b:b-a);
+  arr=arr.slice(0,5);
+  localStorage.setItem(key,JSON.stringify(arr));
+  return arr;
+}
+
+function update(){
+  let needSpawnObstacle=false;
+
+  if(mode==="time"){
+    const remain=TIME_LIMIT-Math.floor((Date.now()-startTime)/1000);
+    if(remain<=0){
+      clearInterval(loop);
+      timeRank=saveRank("snake_time_rank",score);
+      alert(`限時結束\n本次得分:${score}\n\n最佳紀錄:\n${timeRank.map((v,i)=>`${i+1}. ${v}`).join("\n")}`);
+      return init();
+    }
+  }
+
+  if(mode==="obstacle"){
+    const elapsed=Math.floor((Date.now()-startTime)/1000);
+
+    if(
+      elapsed>0 &&
+      elapsed<=OBSTACLE_TIMER_STOP &&
+      elapsed%30===0 &&
+      elapsed!==lastObstacleTimeMark
+    ){
+      needSpawnObstacle=true;
+      lastObstacleTimeMark=elapsed;
+    }
+  }
+
+  const head={x:snake[0].x+dx,y:snake[0].y+dy};
+
+  if(head.x<0)head.x=grid-1;
+  if(head.x>=grid)head.x=0;
+  if(head.y<0)head.y=grid-1;
+  if(head.y>=grid)head.y=0;
+
+  if(snake.some(s=>s.x===head.x&&s.y===head.y)) return gameOver();
+
+  if(mode==="obstacle" && obstacles.some(o=>o.x===head.x&&o.y===head.y)){
+    createParticles(head.x*cell+cell/2,head.y*cell+cell/2,30,8);
+    draw();
+    return setTimeout(gameOver,120);
+  }
+
+  snake.unshift(head);
+
+  if(head.x===food.x&&head.y===food.y){
+    score++;
+    createParticles(food.x*cell+cell/2,food.y*cell+cell/2);
+    spawnFood();
+    refreshWorld();
+
+    if(mode==="classic"){
+      const lv=Math.floor(score/6);
+      clearInterval(loop);
+      loop=setInterval(update,Math.max(33,BASE_SPEED-lv*5));
+    }
+
+    if(mode==="speed" && score>=SPEED_TARGET){
+      clearInterval(loop);
+      const t=((Date.now()-startTime)/1000).toFixed(2);
+      speedRank=saveRank("snake_speed_rank",parseFloat(t),true);
+      alert(`任務成功 (${SPEED_TARGET}/${SPEED_TARGET})\n完成時間:${t}s\n\n最快紀錄:\n${speedRank.map((v,i)=>`${i+1}. ${v}s`).join("\n")}`);
+      return init();
+    }
+
+    if(mode==="obstacle" && score%6===0){
+      needSpawnObstacle=true;
+    }
+
+  }else{
+    snake.pop();
+  }
+
+  if(mode==="obstacle" && needSpawnObstacle){
+    spawnObstacle();
+  }
+
+  particles.forEach(p=>{
+    p.x+=p.vx;
+    p.y+=p.vy;
+    p.life--;
+  });
+  particles=particles.filter(p=>p.life>0);
+
+  draw();
+  updateUI();
+}
+
+function gameOver(){
+  clearInterval(loop);
+
+  if(mode==="classic"){
+    classicRank=saveRank("snake_rank",score);
+    alert(`遊戲結束\n本次得分:${score}\n\n最佳紀錄:\n${classicRank.map((v,i)=>`${i+1}. ${v}`).join("\n")}`);
+  }
+  if(mode==="speed"){
+    alert(`任務失敗 (${score}/${SPEED_TARGET})\n\n最快紀錄:\n${speedRank.map((v,i)=>`${i+1}. ${v}s`).join("\n")}`);
+  }
+  if(mode==="time"){
+    timeRank=saveRank("snake_time_rank",score);
+    alert(`限時結束\n本次得分:${score}\n\n最佳紀錄:\n${timeRank.map((v,i)=>`${i+1}. ${v}`).join("\n")}`);
+  }
+  if(mode==="obstacle"){
+    obstacleRank=saveRank("snake_obstacle_rank",score);
+    alert(`障礙模式結束\n本次得分:${score}\n\n最佳紀錄:\n${obstacleRank.map((v,i)=>`${i+1}. ${v}`).join("\n")}`);
+  }
+
+  init();
+}
+
+function draw(){
+  const bg=bgImgs[worldIndex];
+  if(bg.complete) ctx.drawImage(bg,0,0,400,400);
+
+  ctx.fillStyle="rgba(0,0,0,0.35)";
+  ctx.fillRect(0,0,400,400);
+
+  ctx.fillStyle="red";
+  ctx.beginPath();
+  ctx.arc(food.x*cell+cell/2,food.y*cell+cell/2,cell*0.25,0,Math.PI*2);
+  ctx.fill();
+
+  if(mode==="obstacle"){
+    obstacles.forEach(o=>{
+      const cx=o.x*cell+cell/2;
+      const cy=o.y*cell+cell/2;
+
+      ctx.shadowColor="#facc15";
+      ctx.shadowBlur=14;
+
+      ctx.fillStyle="#111";
+      ctx.beginPath();
+      ctx.arc(cx,cy,cell*0.40,0,Math.PI*2);
+      ctx.fill();
+
+      ctx.shadowBlur=0;
+
+      ctx.strokeStyle="#f59e0b";
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(cx+5,cy-8);
+      ctx.lineTo(cx+10,cy-15);
+      ctx.stroke();
+
+      ctx.fillStyle="#fde047";
+      ctx.beginPath();
+      ctx.arc(cx+11,cy-16,3,0,Math.PI*2);
+      ctx.fill();
+    });
+  }
+
+  snake.forEach((s,i)=>{
+    const shrink=i===0?0:cell*0.1;
+    const size=cell-shrink*2;
+    ctx.fillStyle=i===0?"#fff":"#22c55e";
+    ctx.fillRect(s.x*cell+shrink,s.y*cell+shrink,size,size);
+  });
+
+  particles.forEach(p=>{
+    ctx.fillStyle=`rgba(255,255,255,${p.life/20})`;
+    ctx.fillRect(p.x,p.y,3,3);
+  });
+}
+
+function updateUI(){
+  const elapsed=Math.floor((Date.now()-startTime)/1000);
+  const timeText=mode==="time"
+    ? Math.max(0,TIME_LIMIT-elapsed)+"s"
+    : elapsed+"s";
+
+  info.innerText=`模式:${mode} | 得分:${score} | 時間:${timeText}`;
+}
+
+window.addEventListener("keydown",e=>{
+  switch(e.key){
+    case "ArrowUp": if(dy!==1){dx=0;dy=-1;} break;
+    case "ArrowDown": if(dy!==-1){dx=0;dy=1;} break;
+    case "ArrowLeft": if(dx!==1){dx=-1;dy=0;} break;
+    case "ArrowRight": if(dx!==-1){dx=1;dy=0;} break;
+  }
+});
+
+setMode("classic");
+</script>
+</body>
+</html>
